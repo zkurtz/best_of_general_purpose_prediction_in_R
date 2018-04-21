@@ -1,0 +1,200 @@
+---
+title: "The best of general-purpose prediction with R"
+author: Zach Kurtz
+date: 2018-04-24
+output: 
+    beamer_presentation
+---
+
+```{r echo = FALSE, warning = FALSE, results = 'hide'}
+# THIS GENERATES THE MAIN CONTENT AS A TEMPORARY FILE, SOURCED IN THE NEXT BLOCK BELOW
+library(knitr)
+library(data.table)
+```
+
+## Zach's little world of R
+
+Data stores: csv, mongolite, RSQLite
+
+Exploratory analysis: data.table, base graphics
+
+Prediction: **lightgbm**
+
+Model tuning: **mlrMBO**
+
+Presenting: https://github.com/zkurtz/useR_meetup_2018_04
+
+
+
+## Simulate a trivial dataset
+
+![Data generated from a linear model](images/data_linear.pdf)
+
+## Introduction to lightgbm
+
+Goal: Predict outcome $y$ from predictor(s) $x$
+
+Basic building block: a decision tree
+
+The first decision tree will have errors/residuals
+
+The second tree reduces the errors of the first
+
+Successive trees keep 'chipping away' at the errors
+
+
+## Running lightgbm
+
+```{r eval=FALSE}
+# matrix X of features
+# vector y of labels
+library(lightgbm)
+bst = lightgbm(
+    data = X,
+    label = y,
+    num_leaves = 4,
+    min_data_in_leaf = 1,
+    learning_rate = 1,
+    nrounds = 1,
+    objective = "regression")
+yhat = predict(bst, data = X)
+```
+
+## Fitted LightGBM
+
+![Fitted values for LightGBM with 4 leaves](images/lgb_fit_4_leaves.pdf)
+
+## Fitted LightGBM
+
+![Fitted values for LightGBM with 20 leaves](images/lgb_fit_20_leaves.pdf)
+
+## Running lightgbm
+
+```{r eval=FALSE}
+bst = lightgbm(
+    data = X,
+    label = y,
+    num_leaves = 20,
+    min_data_in_leaf = 1,
+    learning_rate = 0.3,
+    nrounds = 1,
+    objective = "regression")
+```
+
+## Fitted LightGBM
+
+![Decrease learning rate from 1 to 0.3](images/lgb_fit_rate_0.3.pdf)
+
+## Fitted LightGBM
+
+![Increase nrounds from 1 to 100](images/lgb_fit_nrounds_100.pdf)
+
+## Automatic hyperparameter tuning with mlrMBO
+
+**mlr**: Machine learning in R -- "a generic, object-oriented, and extensible framework" that provides a standardized interface to 160+ learners
+
+**mlrMBO**: Model-based optimization
+
+Tuning outline:
+
+- Decide which parameters to tune
+- Decide what range of values to consider for each parameter
+- Define a loss function
+- Choose a search strategy to minimize the loss
+
+## Automatic hyperparameter tuning with mlrMBO
+
+```{r eval=FALSE}
+search_space = makeParamSet(
+    makeIntegerParam("num_leaves", 2, 30),
+    makeIntegerParam("min_data_in_leaf", 1, 50),
+    makeNumericParam("learning_rate", 0.001, 0.4),
+    makeIntegerParam("nrounds", 20, 200)
+)
+loss = function(h){
+    cv = lightgbm::lgb.cv(
+        data = X, label = y,
+        num_leaves = h[1],
+        min_data_in_leaf = h[2],
+        learning_rate = h[3],
+        nrounds = h[4],
+        nfold = 5, verbose = -1, objective = "regression")
+    return(tail(cv$record_evals$valid$l2$eval, 1)[[1]])
+}
+```
+
+## Automatic hyperparameter tuning with mlrMBO
+
+Package the loss and the search space into one objective:
+```{r eval=FALSE}
+tuning_objective = makeSingleObjectiveFunction(
+    name = "wrap_lightgbm",
+    fn = objective,
+    par.set = search_space,
+    noisy = TRUE,
+    minimize = TRUE
+)
+```
+
+## Automatic hyperparameter tuning with mlrMBO
+
+```{r eval=FALSE}
+# Decide what tuner to use and how long to run it
+ctrl = makeMBOControl()
+ctrl = setMBOControlTermination(ctrl, time.budget = 3600)
+# Start tuning!
+res = mbo(tuning_objective, control = ctrl)
+```
+
+```{r echo=FALSE}
+res = readRDS("tune_res.RDS")
+evals = as.data.frame(res$opt.path)
+```
+Best 6 out of `r dim(evals)[1]` iterations:
+```{r echo=FALSE}
+EV = data.table(evals[, c('y', 'num_leaves',
+                          'min_data_in_leaf', 'learning_rate',
+                          'nrounds')])
+EV$iter = 1:nrow(EV)
+EV = EV[order(y),]
+EV$y = round(EV$y, 1)
+EV$learning_rate = round(EV$learning_rate, 3)
+setnames(EV, 'y', 'loss')
+setnames(EV, 'min_data_in_leaf', 'min_data')
+setnames(EV, 'learning_rate', 'learn_rate')
+knitr::kable(head(EV))
+```
+
+<!-- ```{r, eval=FALSE} -->
+<!-- # View the selected optimum -->
+<!-- res$x -->
+<!-- ``` -->
+<!-- - num_leaves = `r res$x$num_leaves` -->
+<!-- - min_data_in_leaf = `r res$x$min_data_in_leaf` -->
+<!-- - learning_rate = `r res$x$learning_rate` -->
+<!-- - nrounds = `r res$x$nrounds` -->
+
+<!-- This optimum occured at the `r res$best.ind`th evaluation out of `r dim(evals)[1]` -->
+
+## Fitted LightGBM
+
+![Fitted values for LightGBM after tuning](images/lgb_tuned.pdf)
+
+## Some proposals for future work
+
+GBMs:
+
+- Try an adaptive learning rate (popular in deep learning)
+- Use a variety of weak learners; not only trees
+
+Hyperparameter tuning: 
+
+- Grow a battery of test cases to evaluate tuners
+- Make hyperparameter transfer learning methods more accessible
+- Invent the first (?) hyperparameter regularization method
+
+## Thank you!
+
+Contact: `zkurtz` at `gmail`
+
+
